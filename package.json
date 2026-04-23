@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "dependencies": {
     "kafkajs": "^2.2.4",
-    "tsx": "^4.7.1"
+    "tsx": "^4.21.0"
   }
 }
