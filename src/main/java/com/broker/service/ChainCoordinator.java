@@ -1,69 +1,69 @@
 package com.broker.service;
 
 import com.broker.chain.*;
-import com.broker.entity.*;
-import com.broker.repository.*;
+import com.broker.entity.BaseRetryJob;
+import com.broker.repository.OrderRepository;
+import com.broker.repository.PaymentRepository;
+import com.broker.repository.ProductRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Service;
-import java.util.Map;
+
+import jakarta.annotation.PostConstruct;
 
 @Service
+@RequiredArgsConstructor
 public class ChainCoordinator {
     private final StepARetryEndpoint stepA;
     private final StepBEmailNotification stepB;
-    private final StepCMongoPersistence stepD; // Es el paso D del diagrama
+    private final StepDMongoPersistence stepD;
     
-    // Repositorios de Postgres (Paso C)
     private final PaymentRepository paymentRepo;
     private final OrderRepository orderRepo;
     private final ProductRepository productRepo;
 
-    public ChainCoordinator(StepARetryEndpoint stepA, StepBEmailNotification stepB, 
-                            StepCMongoPersistence stepD, PaymentRepository paymentRepo,
-                            OrderRepository orderRepo, ProductRepository productRepo) {
-        this.stepA = stepA;
-        this.stepB = stepB;
-        this.stepD = stepD;
-        this.paymentRepo = paymentRepo;
-        this.orderRepo = orderRepo;
-        this.productRepo = productRepo;
-        
-        // Armamos la cadena: A -> B -> D
-        this.stepA.setNext(this.stepB);
-        this.stepB.setNext(this.stepD);
+    @PostConstruct
+    public void init() {
+        // Configuramos la cadena: A -> B -> D
+        stepA.setNext(stepB);
+        stepB.setNext(stepD);
     }
 
-    public void executeChain(String id, String type, Map<String, Object> data) {
-        ChainState state = ChainState.builder()
-                .dbId(id)
-                .type(type)
-                .data(data)
-                .build();
-
+    public void executeChain(String jobId, String type, String data, String url, BaseRetryJob job) {
         try {
-            // Ejecutar la cadena (Pasos A, B y D)
+            System.out.println("\n--- Iniciando Cadena de Responsabilidad para " + type + " ---");
+            
+            ChainState state = new ChainState();
+            state.setJobId(jobId);
+            state.setJobType(type);
+            state.setData(data);
+            state.setRetryUrl(url);
+
+            // Disparar la cadena (A -> B -> D)
             stepA.handle(state);
 
-            // PASO C (Relacional): Actualizamos el estado en Postgres a SUCCESS
-            updateStatusInPostgres(id, type, "SUCCESS");
-            System.out.println("[PASO C] Estado actualizado a SUCCESS en PostgreSQL para: " + id);
+            // PASO C: Actualizar registro completado Postgres
+            JpaRepository repository = getRepository(type);
+            if (repository != null) {
+                updateStatusToSuccess(job, repository);
+            }
 
+            System.out.println("--- Cadena completada con éxito ---\n");
         } catch (Exception e) {
-            updateStatusInPostgres(id, type, "FAILED");
-            System.err.println("Error en la cadena: " + e.getMessage());
+            System.err.println("Error fatal en la cadena: " + e.getMessage());
         }
     }
 
-    private void updateStatusInPostgres(String id, String type, String status) {
-        switch (type) {
-            case "payment":
-                paymentRepo.findById(id).ifPresent(j -> { j.setStatus(status); paymentRepo.save(j); });
-                break;
-            case "order":
-                orderRepo.findById(id).ifPresent(j -> { j.setStatus(status); orderRepo.save(j); });
-                break;
-            case "product":
-                productRepo.findById(id).ifPresent(j -> { j.setStatus(status); productRepo.save(j); });
-                break;
-        }
+    private JpaRepository getRepository(String type) {
+        if ("PAYMENT".equals(type)) return paymentRepo;
+        if ("ORDER".equals(type)) return orderRepo;
+        if ("PRODUCT".equals(type)) return productRepo;
+        return null;
+    }
+
+    private void updateStatusToSuccess(BaseRetryJob job, JpaRepository repository) {
+        job.setStatus("SUCCESS");
+        repository.save(job);
+        System.out.println("[PASO C] Estado actualizado a SUCCESS en PostgreSQL para: " + job.getId());
     }
 }
