@@ -5,7 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 
 @Service
 public class JobScheduler {
@@ -13,7 +13,15 @@ public class JobScheduler {
     private final PaymentRepository paymentRepo;
     private final OrderRepository orderRepo;
     private final ProductRepository productRepo;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${app.retry.endpoint.payment}")
+    private String paymentUrl;
+
+    @Value("${app.retry.endpoint.order}")
+    private String orderUrl;
+
+    @Value("${app.retry.endpoint.product}")
+    private String productUrl;
 
     public JobScheduler(ChainCoordinator coordinator, PaymentRepository paymentRepo, 
                         OrderRepository orderRepo, ProductRepository productRepo) {
@@ -29,25 +37,17 @@ public class JobScheduler {
 
         // Procesar Pagos
         paymentRepo.findByStatus("PENDING").forEach(job -> {
-            coordinator.executeChain(job.getId(), "payment", parseData(job.getData()));
+            coordinator.executeChain(job.getId(), "PAYMENT", job.getData(), paymentUrl, job);
         });
 
         // Procesar Ordenes
         orderRepo.findByStatus("PENDING").forEach(job -> {
-            coordinator.executeChain(job.getId(), "order", parseData(job.getData()));
+            coordinator.executeChain(job.getId(), "ORDER", job.getData(), orderUrl, job);
         });
 
         // Procesar Productos
         productRepo.findByStatus("PENDING").forEach(job -> {
-            coordinator.executeChain(job.getId(), "product", parseData(job.getData()));
+            coordinator.executeChain(job.getId(), "PRODUCT", job.getData(), productUrl, job);
         });
-    }
-
-    private Map<String, Object> parseData(String data) {
-        try {
-            return objectMapper.readValue(data, new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            return Map.of("raw", data);
-        }
     }
 }
